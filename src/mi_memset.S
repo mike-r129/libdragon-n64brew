@@ -48,7 +48,10 @@ __mi_memset16:
     dsll t0, val, 16
     or val, t0
 __mi_memset32:
+    # A uint32_t argument is sign-extended in a 64-bit register when bit 31
+    # is set, so replicate the zero-extended low word, not the whole register
     dsll t0, val, 32
+    dsrl val, t0, 32
     or val, t0
 __mi_memset64:
     move origptr, ptr

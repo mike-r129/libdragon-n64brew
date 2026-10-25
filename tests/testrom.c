@@ -265,6 +265,7 @@ static const struct Testsuite
 	TEST_FUNC(test_irq_reentrancy,           230, TEST_FLAGS_RESET_COUNT),
 	TEST_FUNC(test_sys_hwmemset,			   0, TEST_FLAGS_NO_BENCHMARK | TEST_FLAGS_NO_EMULATOR),
 	TEST_FUNC(test_sys_hwmemset_uncached,      0, TEST_FLAGS_NO_BENCHMARK | TEST_FLAGS_NO_EMULATOR),
+	TEST_FUNC(test_sys_hwmemset32,             0, TEST_FLAGS_NO_BENCHMARK | TEST_FLAGS_NO_EMULATOR),
 	TEST_FUNC(test_scratch_basics,             0, TEST_FLAGS_NO_BENCHMARK),
 	TEST_FUNC(test_scratch_calloc,             0, TEST_FLAGS_NO_BENCHMARK),
 	TEST_FUNC(test_scratch_stats_and_peak,     0, TEST_FLAGS_NO_BENCHMARK),

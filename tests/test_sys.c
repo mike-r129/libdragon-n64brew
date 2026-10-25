@@ -62,3 +62,35 @@ void test_sys_hwmemset_uncached(TestContext *ctx) {
         }
     }
 }
+
+void test_sys_hwmemset32(TestContext *ctx) {
+    const int BUFFER_SIZE = 1024;
+
+    // Values with bit 31 set are passed sign-extended in a 64-bit register
+    // and must still replicate as 32 bits
+    static const uint32_t values[] = { 0x12345678, 0x7EADBEEF, 0x80000001, 0xDEADBEEF, 0xFFFFFFFF, 0 };
+    static const int lengths[] = { 4, 8, 12, 16, 20, 64, 68, 132, 256 };
+    static const int offsets[] = { 0, 4, 8, 12, 124, 128 };
+
+    uint32_t *buf = memalign(2048, BUFFER_SIZE);
+    DEFER(free(buf));
+
+    for (int v=0; v<sizeof(values)/sizeof(values[0]); v++) {
+        for (int i=0; i<sizeof(lengths)/sizeof(lengths[0]); i++) {
+            for (int j=0; j<sizeof(offsets)/sizeof(offsets[0]); j++) {
+                int len = lengths[i], off = offsets[j];
+
+                memset(buf, 0xAA, BUFFER_SIZE);
+                sys_hw_memset32((uint8_t*)buf+off, values[v], len);
+
+                for (int w=0; w<BUFFER_SIZE/4; w++) {
+                    uint32_t expected = (w*4 >= off && w*4 < off+len) ? values[v] : 0xAAAAAAAA;
+
+                    ASSERT_EQUAL_HEX(buf[w], expected,
+                        "sys_hw_memset32 value=%08lx len=%d off=%d failed at word %d",
+                        values[v], len, off, w);
+                }
+            }
+        }
+    }
+}
