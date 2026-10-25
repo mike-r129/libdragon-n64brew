@@ -1112,6 +1112,7 @@ void rspq_overlay_unregister(uint32_t overlay_id)
         rspq_data.rspq_ovl_table.data_rdram[ovl_id + i] = 0;
         rspq_data.rspq_ovl_table.idmap[ovl_id + i] = 0;
     }
+    rspq_overlay_ucodes[ovl_id] = NULL;
 
     rspq_update_tables(false);
 }
