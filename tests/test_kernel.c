@@ -284,3 +284,64 @@ void test_kernel_thread_local(TestContext *ctx) {
 	uint8_t expected[] = { 10, 20, 30, 11, 21, 31, 12, 22, 32 };
 	ASSERT_EQUAL_MEM(thval, expected, sizeof(expected), "invalid order of threads");
 }
+
+static uint32_t kdw_rom;
+static uint8_t *kdw_kick;
+static volatile int kdw_waiting, kdw_done_rounds, kdw_lost;
+
+// Timer callback: polls the PI like debugf does (io_read waits for the DMA
+// queue with a manual interrupt poll), so it takes the transfer's interrupt.
+static void kdw_steal(int ovfl) {
+	while (*PI_STATUS & PI_STATUS_DMA_BUSY) {}
+	io_read(kdw_rom);
+}
+
+// Counts the rounds in which the waiting thread was not woken, and rescues it.
+static void kdw_watchdog(int ovfl) {
+	static int last, stale;
+	if (!kdw_waiting || kdw_done_rounds != last) {
+		last = kdw_done_rounds;
+		stale = 0;
+		return;
+	}
+	if (++stale < 4) return;
+	stale = 0;
+	kdw_lost++;
+	// A transfer of its own: its interrupt reaches the handler, which wakes the thread
+	dma_read_async(kdw_kick, kdw_rom, 64);
+}
+
+void test_kernel_dma_wakeup(TestContext *ctx) {
+	// A thread waiting for a DMA is parked until the PI interrupt wakes it.
+	// When another context polls the PI first and takes the interrupt, the
+	// interrupt handler never sees it: the poll must wake the waiters.
+	enum { ROUNDS = 24, LEN = 32768 };
+	kdw_rom = (dfs_rom_addr("random.dat") + 7) & ~7;
+	uint8_t *buf = malloc_uncached(LEN);
+	kdw_kick = malloc_uncached(64);
+	DEFER(free_uncached(buf));
+	DEFER(free_uncached(kdw_kick));
+	kdw_waiting = kdw_done_rounds = kdw_lost = 0;
+
+	timer_init();
+	DEFER(timer_close());
+	kernel_init();
+	DEFER(kernel_close());
+	timer_link_t *wd = new_timer(TICKS_FROM_MS(25), TF_CONTINUOUS, kdw_watchdog);
+	DEFER(delete_timer(wd));
+	timer_link_t steal_timer;
+
+	for (int k = 0; k < ROUNDS; k++) {
+		dma_wait();
+		uint64_t t = dma_read_async(buf, kdw_rom, LEN);
+		// 0 to 300 us after the start: before and after the thread parks
+		start_timer(&steal_timer, 1 + TICKS_FROM_US((k % 16) * 20), TF_ONE_SHOT, kdw_steal);
+		kdw_waiting = 1;
+		dma_wait_finished(t);
+		kdw_waiting = 0;
+		kdw_done_rounds = k + 1;
+		stop_timer(&steal_timer);
+	}
+	dma_wait();
+	ASSERT_EQUAL_SIGNED(kdw_lost, 0, "thread never woken in %d of %d rounds", kdw_lost, (int)ROUNDS);
+}

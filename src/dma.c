@@ -92,6 +92,9 @@ static void pi_manual_interrupt_poll(void)
     unsigned long status = *MI_INTERRUPT & *MI_MASK;
     if (status & MI_INTERRUPT_PI) {
         PI_regs->status = PI_CLEAR_INTERRUPT;
+        // This interrupt never reaches __MI_handler: wake the threads waiting
+        // for the PI, as it would.
+        if (__kernel) __kcond_broadcast_isr(&__kirq_cond_pi);
         pi_interrupt();
     }
 }
