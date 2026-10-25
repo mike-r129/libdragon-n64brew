@@ -1366,6 +1366,61 @@ bool rspq_in_highpri(void)
     return (rspq_ctx == &highpri);
 }
 
+/**
+ * mvs64 hardening (2026-09-23): highpri wedge watchdog, the safety net
+ * behind the rspq_highpri_begin ordering fix (the ordering fix itself is
+ * upstream in preview as 43c67dcf, see rspq_highpri_begin).
+ *
+ * Called on every RSP_WAIT_LOOP iteration (rsp.c __rsp_check_assert), i.e.
+ * exactly while the CPU is blocked on RSP progress. The signature: RSP halted
+ * at the kernel idle break with SIG_HIGHPRI_RUNNING set and neither
+ * SIG_HIGHPRI_REQUESTED nor SIG_MORE pending, while the CPU has no highpri
+ * segment open. That state never resolves by itself: the RSP sleeps at the
+ * end of the highpri stream, and each lowpri flush only makes it refetch the
+ * same 0x00 terminator and break again. Held for 2ms (the legitimate
+ * transients last microseconds), recover by queueing an empty highpri
+ * segment (WRITE_STATUS + epilog) at that very position: the RSP runs it and
+ * returns to lowpri. A false positive is harmless, since an empty segment is
+ * a no-op. Recoveries are counted in __rspq_wedge_recoveries (telemetry).
+ *
+ * Preview port: also bail out while a rspq_queue_t is being recorded
+ * (rspq_highpri_begin asserts on that; rspq_ctx is NULL then, so the context
+ * check already covers it, but keep it explicit) and while the queue engine
+ * is not running (rspq_init waits for the RDP before rspq_start loads the
+ * ucode, and a stale SIG3 from a previous ucode must not trigger a flush).
+ */
+uint32_t __rspq_wedge_recoveries;
+
+void __rspq_wedge_check(void)
+{
+    static bool seen;
+    static uint32_t first_seen;
+    const uint32_t mask = SP_STATUS_HALTED | SP_STATUS_BROKE |
+        SP_STATUS_DMA_BUSY | SP_STATUS_IO_BUSY | SP_STATUS_SIG_MORE |
+        SP_STATUS_SIG_HIGHPRI_RUNNING | SP_STATUS_SIG_HIGHPRI_REQUESTED;
+    const uint32_t wedged = SP_STATUS_HALTED | SP_STATUS_BROKE |
+        SP_STATUS_SIG_HIGHPRI_RUNNING;
+
+    if (!rspq_initialized || !rspq_is_running || rspq_ctx != &lowpri ||
+        rspq_block || rspq_queue_recording ||
+        (*SP_STATUS & mask) != wedged) {
+        seen = false;
+        return;
+    }
+    uint32_t now = TICKS_READ();
+    if (!seen) {
+        seen = true;
+        first_seen = now;
+        return;
+    }
+    if (TICKS_DISTANCE(first_seen, now) < (int32_t)TICKS_FROM_MS(2))
+        return;
+    seen = false;
+    __rspq_wedge_recoveries++;
+    rspq_highpri_begin();
+    rspq_highpri_end();
+}
+
 /** Invoke all #rspq_block_atexit callbacks and free the list nodes. */
 static void rspq_block_free_atexit_chain(rspq_block_t *block)
 {
