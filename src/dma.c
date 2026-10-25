@@ -303,8 +303,17 @@ static uint64_t pi_enqueue(uint8_t type, void *ram, pi_addr_t pi_addr, unsigned 
 
     // If the PI is idle, start the transfer immediately. For misaligned
     // reads, this also runs the CPU fixups right now, in caller context.
-    if (pi_state == PI_STATE_IDLE && !__dma_busy())
-        pi_poll();
+    if (pi_state == PI_STATE_IDLE) {
+        // A CPU access to the PI bus (eg: io_write, or any store to the
+        // cartridge space) leaves IO_BUSY set for a moment, without a PI
+        // interrupt following it. If we enqueued now, nothing would ever
+        // start this entry, so wait for the access to finish. A DMA by
+        // another PI user always ends with an interrupt: that case is left
+        // to pi_interrupt().
+        while ((PI_regs->status & (PI_STATUS_DMA_BUSY | PI_STATUS_IO_BUSY)) == PI_STATUS_IO_BUSY) {}
+        if (!__dma_busy())
+            pi_poll();
+    }
 
     enable_interrupts();
     return ticket;
