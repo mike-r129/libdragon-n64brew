@@ -236,6 +236,7 @@ int eepfs_init(const eepfs_entry_t * entries, size_t count)
 
     if ( eepfs_files == NULL )
     {
+        eepfs_files_count = 0;
         return EEPFS_ENOMEM;
     }
 
@@ -492,7 +493,7 @@ int eepfs_erase(const char * path)
         num_bytes *= 2;
     }
 
-    const size_t num_blocks = DIVIDE_CEIL(file->num_bytes, EEPROM_BLOCK_SIZE);
+    const size_t num_blocks = DIVIDE_CEIL(num_bytes, EEPROM_BLOCK_SIZE);
     size_t current_block = file->start_block;
 
     /* eeprom_buf is initialized to all zeroes */
