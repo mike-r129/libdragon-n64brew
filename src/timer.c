@@ -32,6 +32,12 @@ static void timer_update_compare(timer_link_t *head, uint32_t now)
 		/* See how much time is left before the timer expires. Notice that
 		   the subtraction is also safe with overflows. */
 		uint32_t left = head->left - now;
+
+		/* A timer that is already overdue has a negative distance, which as
+		   an unsigned value is almost a full Count period: wait a
+		   microsecond instead of 91 seconds. */
+		if ((int32_t)left < 0)
+			left = TIMER_TICKS(1);
 		if (left < smallest)
 			smallest = left;
 
@@ -62,23 +68,21 @@ static int __proc_timers(timer_link_t * thead)
 {
 	timer_link_t *head = thead;
 	timer_link_t *last = 0;
-	uint32_t start = C0_COMPARE();
 	uint32_t now = TICKS_READ();
 
 	while (head)
 	{
-		/* Consider a timer as expired if its deadline is at the
-		 * COMPARE value (time at which the interrupt triggered) or up to 5
-		 * microseconds after. This 5 microseconds window is useful to cluster
+		/* Consider a timer as expired if its deadline has passed or is up
+		 * to 5 microseconds ahead. This 5 microseconds window is useful to cluster
 		 * timers that expire close to each other; eg: if the client creates
 		 * many timers with the same period, they will be created in a fast
 		 * sequence and have a little delay between each other. */
 		if (!(head->flags & TF_DISABLED) &&
-			TICKS_DISTANCE(start, head->left) >= 0 &&
 			TICKS_DISTANCE(head->left, now + TIMER_TICKS(5)) >= 0)
 		{
 			/* yes - timed out, do callback */
 			head->ovfl = TICKS_DISTANCE(head->left, now);
+			uint32_t left = head->left;
 
 			/* invoke the appropriate callback function */
 			if (head->flags & TF_CONTEXT && head->callback_with_context)
@@ -91,6 +95,13 @@ static int __proc_timers(timer_link_t * thead)
 				/* Timer was disabled during the callback. We need to
 				 * reprocess the list to see if there are other timers
 				 * that need to be called. */
+				return 1;
+			}
+
+			if (head->left != left)
+			{
+				/* The callback restarted its own timer: it is already
+				 * linked with its new deadline, so leave it alone. */
 				return 1;
 			}
 
@@ -269,6 +280,25 @@ void restart_timer(timer_link_t *timer)
 		uint32_t now = TICKS_READ();
 		timer->left = now + (int32_t)timer->set;
 		timer->flags &= ~TF_DISABLED;
+
+		/* Take the timer out of the list if it is armed (a timer
+		 * restarted from its own callback is), or linking it again would
+		 * make the list loop. */
+		timer_link_t *head = TI_timers;
+		timer_link_t *last = 0;
+		while (head)
+		{
+			if (head == timer)
+			{
+				if (last)
+					last->next = head->next;
+				else
+					TI_timers = head->next;
+				break;
+			}
+			last = head;
+			head = head->next;
+		}
 
 		timer->next = TI_timers;
 		TI_timers = timer;
