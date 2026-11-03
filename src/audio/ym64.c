@@ -36,6 +36,27 @@ static int ymread(ym64player_t *player, void *buf, int sz) {
 	return fread(buf, 1, sz, player->f);
 }
 
+/**
+ * @brief First sample of an audioframe in the waveform.
+ *
+ * There are chipfreq / (8*AY8910_DECIMATE*playfreq) samples per audioframe,
+ * usually a fractional number (eg: 416.67 for a 1 MHz chip at 100 Hz).
+ * Audioframe N covers the samples from ceil(N*spf) to ceil((N+1)*spf)-1, which
+ * are exactly the samples s with floor(s/spf) == N (#sample_frame). The math is
+ * done with integers so that the two mappings agree on every sample: the
+ * generated stream never drifts from the positions the mixer asks for.
+ */
+static int frame_start(ym64player_t *player, int frame) {
+	uint64_t den = (uint64_t)8 * AY8910_DECIMATE * player->playfreq;
+	return ((uint64_t)frame * player->chipfreq + den - 1) / den;
+}
+
+/** @brief Audioframe that contains a sample of the waveform (see #frame_start) */
+static int sample_frame(ym64player_t *player, int pos) {
+	uint64_t den = (uint64_t)8 * AY8910_DECIMATE * player->playfreq;
+	return (uint64_t)pos * den / player->chipfreq;
+}
+
 static void ym_wave_read(void *ctx, samplebuffer_t *sbuf, int wpos, int wlen, bool seeking) {
 	ym64player_t *player = (ym64player_t*)ctx;
 
@@ -58,23 +79,26 @@ static void ym_wave_read(void *ctx, samplebuffer_t *sbuf, int wpos, int wlen, bo
 	}
 
 	// Calculate the last audioframe to be reconstructed in this call. Notice
-	// that we calculate it from its absolute position using the fractional
-	// number of samples per audioframe, so that we are always fully correct
-	// with respect fractional frequencies.
-	int lastframe = ((float)(wpos+wlen-1) / f_samples_per_frame);
+	// that we calculate it from its absolute position using the exact
+	// fractional number of samples per audioframe, so that we are always fully
+	// correct with respect fractional frequencies.
+	int lastframe = sample_frame(player, wpos+wlen-1);
 
-	// Now switch to integers. Number of audioframes to process, and number
-	// of (integer) samplers per audioframe.
+	// Now switch to integers. Number of audioframes to process.
 	int nframes = lastframe - player->curframe + 1;
-	int samples_per_frame = player->wave.append_units;
-
-	// Get the pointer to the sample buffer.
-	int16_t *samples = samplebuffer_append(sbuf, nframes*samples_per_frame);
-
-	int16_t *out = samples;
-	const int num_channels = AY8910_OUTPUT_STEREO ? 2 : 1;
 
 	for (int i=0;i<nframes;i++) {
+		// Number of (integer) samples of this audioframe: the frames add up
+		// exactly to the fractional mapping above, so every call appends up
+		// to wpos+wlen. It is never more than append_units.
+		int samples_per_frame = frame_start(player, player->curframe+1) -
+			frame_start(player, player->curframe);
+
+		// Append one audioframe at a time: that is what append_units declares,
+		// so each append is guaranteed to fit the samplebuffer margin when it
+		// wraps. Appending all nframes at once could exceed the margin.
+		int16_t *out = samplebuffer_append(sbuf, samples_per_frame);
+
 		// Read 14 ay8910 registers (+ maybe 2 digidrums regs, unsupported)
 		uint8_t regs[16];
 		ymread(player, regs, 16);
@@ -96,7 +120,6 @@ static void ym_wave_read(void *ctx, samplebuffer_t *sbuf, int wpos, int wlen, bo
 		// Generate the required number of samples, and store them into the
 		// sample buffer.
 		ay8910_gen(&player->ay, out, samples_per_frame);
-		out += (int)samples_per_frame * num_channels;
 		player->curframe++;
 	}
 }
@@ -205,8 +228,9 @@ void ym64player_open(ym64player_t *player, const char *fn, ym64player_songinfo_t
 		.loop_len = len-loop_start,
 		.read = ym_wave_read,
 		.ctx = player,
-		// Every audioframe is reconstructed as a whole (see #ym_wave_read).
-		.append_units = (int)(freq / player->playfreq),
+		// Every audioframe is reconstructed as a whole (see #ym_wave_read),
+		// and the longest one has the fractional frame length rounded up.
+		.append_units = frame_start(player, 1),
 	};
 
 	ay8910_reset(&player->ay);
