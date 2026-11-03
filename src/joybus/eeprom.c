@@ -381,12 +381,15 @@ void eeprom_write_bytes( const void * src, size_t start, size_t len )
     size_t last_block = (start + len - 1) / EEPROM_BLOCK_SIZE;
     size_t first_offset = start % EEPROM_BLOCK_SIZE;
     size_t end_offset = (start + len) % EEPROM_BLOCK_SIZE;
-    bool need_rmw_prefix = first_offset || (last_block != first_block && end_offset);
-    if (need_rmw_prefix) {
+    // A write that ends inside its first block (even one starting at the block
+    // boundary) only covers part of that block, which must be fetched too.
+    bool first_partial = first_offset || (last_block == first_block && end_offset);
+    bool last_partial = last_block != first_block && end_offset;
+    if (first_partial || last_partial) {
         bool had_flush_in_progress = eeprom_flush_pause();
-        if (first_offset)
+        if (first_partial)
             eeprom_cache_ensure_block_valid(first_block);
-        if (last_block != first_block && end_offset)
+        if (last_partial)
             eeprom_cache_ensure_block_valid(last_block);
         eeprom_flush_resume(had_flush_in_progress);
     }
