@@ -98,4 +98,31 @@ void test_eepromfs(TestContext *ctx) {
     ASSERT(eepfs_verify_signature() == false, "expected invalid eepfs signature"); 
     eepfs_wipe();
     ASSERT(eepfs_verify_signature() == true, "expected valid eepfs signature"); 
+
+    // Erasing a file with a checksum and a backup copy clears every block it
+    // occupies (data, checksum, generation byte and the copy), not just the data
+    result = eepfs_close();
+    ASSERT_EQUAL_SIGNED(result, EEPFS_ESUCCESS, "eepfs close failed");
+    const eepfs_entry_t eeprom_files3[] = {
+        { "/safe", 20, true, true },
+    };
+    result = eepfs_init(eeprom_files3, 1);
+    ASSERT_EQUAL_SIGNED(result, EEPFS_ESUCCESS, "eepfs init failed");
+    eepfs_wipe();
+    uint8_t safe_src[20];
+    for (int i = 0; i < sizeof(safe_src); i++) {
+        safe_src[i] = 0x80 + i;
+    }
+    result = eepfs_write("safe", safe_src, sizeof(safe_src));
+    ASSERT_EQUAL_SIGNED(result, EEPFS_ESUCCESS, "eepfs write failed");
+    result = eepfs_erase("safe");
+    ASSERT_EQUAL_SIGNED(result, EEPFS_ESUCCESS, "eepfs erase failed");
+    // 20 + 2 + 1 -> 24, doubled: six blocks from block 1
+    for (int block = 1; block < 7; block++) {
+        uint8_t raw[EEPROM_BLOCK_SIZE];
+        eeprom_read(block, raw);
+        for (int i = 0; i < EEPROM_BLOCK_SIZE; i++) {
+            ASSERT_EQUAL_UNSIGNED(raw[i], 0, "eepfs erase left block %d byte %d", block, i);
+        }
+    }
 }
