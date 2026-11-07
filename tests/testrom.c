@@ -262,6 +262,8 @@ static const struct Testsuite
 	TEST_FUNC(test_timer_context,            186, TEST_FLAGS_RESET_COUNT),
 	TEST_FUNC(test_timer_disabled_start,     733, TEST_FLAGS_RESET_COUNT),
 	TEST_FUNC(test_timer_disabled_restart,   733, TEST_FLAGS_RESET_COUNT),
+	TEST_FUNC(test_timer_restart_in_callback, 0, TEST_FLAGS_NO_BENCHMARK | TEST_FLAGS_RESET_COUNT),
+	TEST_FUNC(test_timer_overdue,            0, TEST_FLAGS_NO_BENCHMARK | TEST_FLAGS_RESET_COUNT),
 	TEST_FUNC(test_irq_reentrancy,           230, TEST_FLAGS_RESET_COUNT),
 	TEST_FUNC(test_sys_hwmemset,			   0, TEST_FLAGS_NO_BENCHMARK | TEST_FLAGS_NO_EMULATOR),
 	TEST_FUNC(test_sys_hwmemset_uncached,      0, TEST_FLAGS_NO_BENCHMARK | TEST_FLAGS_NO_EMULATOR),

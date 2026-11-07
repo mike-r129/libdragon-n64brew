@@ -183,6 +183,63 @@ static uint32_t write_count(uint32_t x) {
 	return old;
 }
 
+void test_timer_restart_in_callback(TestContext *ctx) {
+	timer_init();
+	DEFER(timer_close());
+
+	// A callback may restart its own timer. The timer must stay in the list
+	// exactly once (it used to link to itself) and fire again a period later.
+	volatile int called = 0;
+	timer_link_t *t1 = NULL;
+	void cb(int ovlf) {
+		called++;
+		if (called < 3) restart_timer(t1);
+	}
+
+	t1 = new_timer(TICKS_FROM_MS(2), TF_ONE_SHOT, cb);
+	DEFER(delete_timer(t1));
+
+	wait_ms(10);
+	ASSERT_EQUAL_SIGNED(called, 3, "timer not restarted by its own callback");
+	wait_ms(5);
+	ASSERT_EQUAL_SIGNED(called, 3, "timer called again?");
+
+	// Restarting a timer that is armed moves its deadline, it does not add
+	// a second entry.
+	called = 100;
+	start_timer(t1, TICKS_FROM_MS(4), TF_ONE_SHOT, cb);
+	wait_ms(2);
+	restart_timer(t1);
+	wait_ms(3);
+	ASSERT_EQUAL_SIGNED(called, 100, "timer called before its restarted deadline");
+	wait_ms(3);
+	ASSERT_EQUAL_SIGNED(called, 101, "timer not called once");
+	wait_ms(10);
+	ASSERT_EQUAL_SIGNED(called, 101, "timer called twice");
+}
+
+void test_timer_overdue(TestContext *ctx) {
+	timer_init();
+	DEFER(timer_close());
+
+	// A timer whose deadline has already passed when the list is polled must
+	// run now, not a full Count period (91 seconds) later.
+	volatile int called = 0;
+	void cb(int ovlf) { called++; }
+
+	timer_link_t *t1 = new_timer(TICKS_FROM_MS(50), TF_ONE_SHOT, cb);
+	DEFER(delete_timer(t1));
+
+	// Polling the list (here by arming another timer) must see it.
+	disable_interrupts();
+	t1->left = TICKS_READ() - TICKS_FROM_MS(1);
+	timer_link_t *t2 = new_timer(TICKS_FROM_MS(50), TF_ONE_SHOT, cb);
+	enable_interrupts();
+	DEFER(delete_timer(t2));
+	wait_ms(2);
+	ASSERT_EQUAL_SIGNED(called, 1, "overdue timer not called");
+}
+
 void test_timer_ticks(TestContext *ctx) {
 	timer_init();
 	DEFER(timer_close());
